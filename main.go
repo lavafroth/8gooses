@@ -9,10 +9,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
 const base string = "https://comics.8muses.com"
+var re *regexp.Regexp
 
 func DownloadArtist(tags []string) error {
 	links, err := Links(tags)
@@ -20,11 +22,7 @@ func DownloadArtist(tags []string) error {
 		return err
 	}
 	for _, link := range links {
-		linkTags, err := Tags(link)
-		if err != nil {
-			return err
-		}
-		if err := DownloadAlbum(linkTags); err != nil {
+		if err := DownloadAlbum(Tags(link)); err != nil {
 			return err
 		}
 	}
@@ -37,11 +35,7 @@ func DownloadAlbum(tags []string) error {
 		return err
 	}
 	for _, link := range links {
-		linkTags, err := Tags(link)
-		if err != nil {
-			return err
-		}
-		if err := DownloadEpisode(linkTags); err != nil {
+		if err := DownloadEpisode(Tags(link)); err != nil {
 			return err
 		}
 	}
@@ -173,37 +167,19 @@ func Links(tags []string) ([]string, error) {
 }
 
 // Tags strips a URL or partial URL to the artist, album and optionally an episode
-func Tags(path string) ([]string, error) {
-	// If we are given a complete URL,
-	// we can trim off the base URL.
-	if strings.HasPrefix(path, base) {
-		path = strings.TrimPrefix(path, base)
+func Tags(path string) []string {
+	tags := []string{}
+
+	groups := re.SubexpNames()
+	for id, value := range re.FindAllStringSubmatch(path, -1)[0] {
+		switch groups[id] {
+		case "artist", "album", "episode":
+			if value != "" {
+			tags = append(tags, value)
+			}
+		}
 	}
-	// For the directories forming the path,
-	fragments := Fragments(path)
-	// if the path begins with "comics", we can trim that.
-	if len(fragments) > 3 && fragments[0] == "comics" {
-		fragments = fragments[2:]
-	}
-	// If the path begins with "album" or "picture", we can trim that too.
-	if len(fragments) > 2 && (fragments[0] == "album" || fragments[0] == "picture") {
-		fragments = fragments[1:]
-	}
-	// If after trimming, we are left with
-	// less than 2 directories, something
-	// has gone terribly wrong. Bail.
-	if len(fragments) == 0 {
-		return fragments, fmt.Errorf("failed to parse uri or path: %s", path)
-	}
-	// If we are left with more than 2 directories,
-	// the user would have probably included the
-	// page number in the path as well.
-	// We can safely ignore that and download the
-	// specified episode.
-	if len(fragments) > 2 {
-		return fragments[:3], nil
-	}
-	return fragments, nil
+	return tags
 }
 
 // AbsoluteURL finds the tags in a URI and reconstructs the full URL
@@ -216,11 +192,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "usage: %s <URL / partial URL>\n", os.Args[0])
 		return
 	}
-	tags, err := Tags(os.Args[1])
-	if err != nil {
-		log.Fatalln(err)
-	}
 
+	re = regexp.MustCompile("(https://)?(comics\\.)?(8muses\\.)?(com/)?(comics/)?((picture|album)/)?(?P<artist>[A-Za-z0-9\\-]+/?)(?P<album>[A-Za-z0-9\\-]+/?)?(?P<episode>[A-Za-z0-9\\-]+/?)?")
+
+	tags := Tags(os.Args[1])
 	var action func(tags []string) error
 	switch len(tags) {
 	case 1:
