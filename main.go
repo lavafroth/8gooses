@@ -14,21 +14,42 @@ import (
 
 const base string = "https://comics.8muses.com"
 
-func DownloadAlbum(uri string) error {
-	links, err := Links(uri)
+func DownloadArtist(tags []string) error {
+	links, err := Links(tags)
 	if err != nil {
 		return err
 	}
 	for _, link := range links {
-		if err := DownloadEpisode(link); err != nil {
+		linkTags, err := Tags(link)
+		if err != nil {
+			return err
+		}
+		if err := DownloadAlbum(linkTags); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func DownloadEpisode(uri string) error {
-	pages, directory, err := Enumerate(uri)
+func DownloadAlbum(tags []string) error {
+	links, err := Links(tags)
+	if err != nil {
+		return err
+	}
+	for _, link := range links {
+		linkTags, err := Tags(link)
+		if err != nil {
+			return err
+		}
+		if err := DownloadEpisode(linkTags); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func DownloadEpisode(tags []string) error {
+	pages, directory, err := Enumerate(tags)
 	if err != nil {
 		return err
 	}
@@ -36,15 +57,14 @@ func DownloadEpisode(uri string) error {
 	if err != nil {
 		return err
 	}
-    fragments := Fragments(uri)
-    episode := fragments[len(fragments)-1]
+	episode := tags[len(tags)-1]
 	log.Printf("Downloading episode %s to %s", episode, directory)
 	DownloadAll(images, directory)
 	return nil
 }
 
-func DocumentAt(uri string) (*goquery.Document, error) {
-	uri, err := AbsoluteURL(uri)
+func DocumentAt(tags []string) (*goquery.Document, error) {
+	uri, err := AbsoluteURL(tags)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +74,7 @@ func DocumentAt(uri string) (*goquery.Document, error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("status code error: %d %s", res.StatusCode, res.Status)
+		return nil, fmt.Errorf("status code error: %d %s for url: %s", res.StatusCode, res.Status, uri)
 	}
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
@@ -115,16 +135,14 @@ func DownloadAll(images []string, directory string) error {
 	return nil
 }
 
-func Enumerate(uri string) ([]string, string, error) {
+func Enumerate(tags []string) ([]string, string, error) {
 	var pages []string
 	var directory string
-	doc, err := DocumentAt(uri)
+	doc, err := DocumentAt(tags)
 	if err != nil {
 		return pages, directory, fmt.Errorf("while parsing episode metadata: %q", err)
 	}
-	fragments := Fragments(uri)
-	fragments = fragments[len(fragments)-3:]
-	directory = filepath.Join(fragments...)
+	directory = filepath.Join(tags[len(tags)-3:]...)
 	os.MkdirAll(directory, 0o700)
 	doc.
 		FindMatcher(goquery.Single(".gallery")).
@@ -137,9 +155,9 @@ func Enumerate(uri string) ([]string, string, error) {
 	return pages, directory, nil
 }
 
-func Links(uri string) ([]string, error) {
+func Links(tags []string) ([]string, error) {
 	var links []string
-	doc, err := DocumentAt(uri)
+	doc, err := DocumentAt(tags)
 	if err != nil {
 		return links, err
 	}
@@ -174,7 +192,7 @@ func Tags(path string) ([]string, error) {
 	// If after trimming, we are left with
 	// less than 2 directories, something
 	// has gone terribly wrong. Bail.
-	if len(fragments) < 2 {
+	if len(fragments) == 0 {
 		return fragments, fmt.Errorf("failed to parse uri or path: %s", path)
 	}
 	// If we are left with more than 2 directories,
@@ -189,11 +207,7 @@ func Tags(path string) ([]string, error) {
 }
 
 // AbsoluteURL finds the tags in a URI and reconstructs the full URL
-func AbsoluteURL(uri string) (string, error) {
-	tags, err := Tags(uri)
-	if err != nil {
-		return "", err
-	}
+func AbsoluteURL(tags []string) (string, error) {
 	return url.JoinPath("https://comics.8muses.com/comics/album", tags...)
 }
 
@@ -206,19 +220,20 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	resource, err := AbsoluteURL(os.Args[1])
-	if err != nil {
-		log.Fatalln(err)
-	}
-	if len(tags) == 2 {
+
+	var action func(tags []string) error
+	switch len(tags) {
+	case 1:
+		action = DownloadArtist
+	case 2:
 		// Download all episodes in the album
-		if err := DownloadAlbum(resource); err != nil {
-			log.Fatalln(err)
-		}
-		return
+		action = DownloadAlbum
+	default:
+		// Download one episode
+		action = DownloadEpisode
 	}
-	// Download one episode
-	if err := DownloadEpisode(resource); err != nil {
+
+	if err := action(tags); err != nil {
 		log.Fatalln(err)
 	}
 }
