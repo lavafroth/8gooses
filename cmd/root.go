@@ -37,6 +37,11 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			log.Fatalln(err)
 		}
+		concurrency, err := cmd.Flags().GetUint("concurrency")
+		if err != nil {
+			log.Fatalln(err)
+		}
+		download.StartJobs(concurrency)
 		for _, arg := range args {
 			tags := resource.Tags(arg)
 
@@ -76,4 +81,5 @@ func init() {
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
 	rootCmd.Flags().StringP("output", "o", ".", "Directory to save the downloaded comics.")
+	rootCmd.Flags().UintP("concurrency", "c", 4, "Number of coroutines to use when downloading.")
 }

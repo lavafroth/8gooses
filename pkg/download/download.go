@@ -15,6 +15,13 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+type Work struct {
+	Destination string
+	Source string
+}
+
+var work chan Work
+
 func Artist(tags []string, destination string) error {
 	links, err := linksFor(tags, "a", "href")
 	if err != nil {
@@ -41,6 +48,19 @@ func Album(tags []string, destination string) error {
 	return nil
 }
 
+func StartJobs(coroutines uint) {
+	work = make(chan Work, coroutines)
+	for ; coroutines > 0; coroutines-- {
+		go func() {
+			for w := range work {
+				if err := download(w.Destination, w.Source); err != nil {
+					log.Printf("warning: %q", err)
+				}
+			}
+		} ()
+	}
+}
+
 func Episode(tags []string, destination string) error {
 	directory := filepath.Join(
 		destination,
@@ -64,13 +84,10 @@ func Episode(tags []string, destination string) error {
 		if err != nil {
 			return fmt.Errorf("while parsing episode metadata: %q", err)
 		}
-		if err := download(filepath.Join(
+		work <- Work{filepath.Join(
 			directory,
 			fmt.Sprintf("%d%s", i, filepath.Ext(source)),
-		), source); err != nil {
-			return fmt.Errorf("while parsing episode metadata: %q", err)
-		}
-
+		), source}
 	}
 	return nil
 }
