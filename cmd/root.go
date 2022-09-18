@@ -46,16 +46,16 @@ var rootCmd = &cobra.Command{
 			tags := resource.Tags(arg)
 
 			// Default to downloading a single episode
-			action := download.Episode
+			action := download.EPISODE
 			switch len(tags) {
 			case 1:
 				// Download all episodes by an artist
-				action = download.Artist
+				action = download.ARTIST
 			case 2:
 				// Download all episodes in the album
-				action = download.Album
+				action = download.ALBUM
 			}
-			if err := action(tags, destination); err != nil {
+			if err := download.Traverse(tags, destination, action); err != nil {
 				log.Fatalln(err)
 			}
 		}

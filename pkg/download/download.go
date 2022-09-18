@@ -15,6 +15,12 @@ import (
 	"github.com/PuerkitoBio/goquery"
 )
 
+const (
+	EPISODE = iota
+	ALBUM
+	ARTIST
+)
+
 type Work struct {
 	Destination string
 	Source string
@@ -22,26 +28,44 @@ type Work struct {
 
 var work chan Work
 
-func Artist(tags []string, destination string) error {
-	links, err := linksFor(tags, "a", "href")
-	if err != nil {
-		return err
-	}
-	for _, link := range links {
-		if err := Album(resource.Tags(link), destination); err != nil {
-			return err
+func Traverse(tags []string, destination string, entity int) error {
+	if entity == EPISODE {
+		directory := filepath.Join(
+			destination,
+			filepath.Join(tags[len(tags)-3:]...),
+		)
+		episode := tags[len(tags)-1]
+		log.Printf("Downloading episode %s to %s", episode, directory)
+		os.MkdirAll(directory, 0o700)
+		links, err := linksFor(tags, ".image img", "data-src")
+		if err != nil {
+			return fmt.Errorf("while parsing episode metadata: %q", err)
 		}
+		for i, link := range links {
+			fragments := strings.Split(strings.Trim(link, "/"), "/")
+			if len(fragments) < 3 {
+				return fmt.Errorf("while parsing image episode metadata: expected image location to have at least 3 fragments: found %d", len(fragments))
+			}
+			fragments = fragments[len(fragments)-3:]
+			fragments[1] = "fl"
+			source, err := url.JoinPath(constants.Base, fragments...)
+			if err != nil {
+				return fmt.Errorf("while parsing episode metadata: %q", err)
+			}
+			work <- Work{filepath.Join(
+				directory,
+				fmt.Sprintf("%d%s", i, filepath.Ext(source)),
+			), source}
+		}
+		return nil
 	}
-	return nil
-}
 
-func Album(tags []string, destination string) error {
 	links, err := linksFor(tags, "a", "href")
 	if err != nil {
 		return err
 	}
 	for _, link := range links {
-		if err := Episode(resource.Tags(link), destination); err != nil {
+		if err := Traverse(resource.Tags(link), destination, entity - 1); err != nil {
 			return err
 		}
 	}
@@ -53,7 +77,7 @@ func StartJobs(coroutines uint) {
 	for ; coroutines > 0; coroutines-- {
 		go func() {
 			for w := range work {
-				if err := download(w.Destination, w.Source); err != nil {
+				if err := download(w); err != nil {
 					log.Printf("warning: %q", err)
 				}
 			}
@@ -61,45 +85,14 @@ func StartJobs(coroutines uint) {
 	}
 }
 
-func Episode(tags []string, destination string) error {
-	directory := filepath.Join(
-		destination,
-		filepath.Join(tags[len(tags)-3:]...),
-	)
-	episode := tags[len(tags)-1]
-	log.Printf("Downloading episode %s to %s", episode, directory)
-	os.MkdirAll(directory, 0o700)
-	links, err := linksFor(tags, ".image img", "data-src")
-	if err != nil {
-		return fmt.Errorf("while parsing episode metadata: %q", err)
-	}
-	for i, link := range links {
-		fragments := strings.Split(strings.Trim(link, "/"), "/")
-		if len(fragments) < 3 {
-			return fmt.Errorf("while parsing image episode metadata: expected image location to have at least 3 fragments: found %d", len(fragments))
-		}
-		fragments = fragments[len(fragments)-3:]
-		fragments[1] = "fl"
-		source, err := url.JoinPath(constants.Base, fragments...)
-		if err != nil {
-			return fmt.Errorf("while parsing episode metadata: %q", err)
-		}
-		work <- Work{filepath.Join(
-			directory,
-			fmt.Sprintf("%d%s", i, filepath.Ext(source)),
-		), source}
-	}
-	return nil
-}
-
-func download(destination string, source string) error {
-	out, err := os.Create(destination)
+func download(w Work) error {
+	out, err := os.Create(w.Destination)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
-	res, err := http.Get(source)
+	res, err := http.Get(w.Source)
 	if err != nil {
 		return err
 	}
