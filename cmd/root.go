@@ -59,6 +59,7 @@ var rootCmd = &cobra.Command{
 				log.Fatalln(err)
 			}
 		}
+		download.Wg.Wait()
 	},
 }
 

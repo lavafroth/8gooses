@@ -3,6 +3,7 @@ package download
 import (
 	"fmt"
 	"io"
+	"sync"
 	"log"
 	"net/http"
 	"net/url"
@@ -27,6 +28,7 @@ type Work struct {
 }
 
 var work chan Work
+var Wg *sync.WaitGroup
 
 func Traverse(tags []string, destination string, entity int) error {
 	if entity == EPISODE {
@@ -52,6 +54,7 @@ func Traverse(tags []string, destination string, entity int) error {
 			if err != nil {
 				return fmt.Errorf("while parsing episode metadata: %q", err)
 			}
+			Wg.Add(1)
 			work <- Work{filepath.Join(
 				directory,
 				fmt.Sprintf("%d%s", i, filepath.Ext(source)),
@@ -73,6 +76,7 @@ func Traverse(tags []string, destination string, entity int) error {
 }
 
 func StartJobs(coroutines uint) {
+	Wg = &sync.WaitGroup{}
 	work = make(chan Work, coroutines)
 	for ; coroutines > 0; coroutines-- {
 		go func() {
@@ -80,6 +84,7 @@ func StartJobs(coroutines uint) {
 				if err := download(w); err != nil {
 					log.Printf("warning: %q", err)
 				}
+				Wg.Done()
 			}
 		} ()
 	}
