@@ -6,11 +6,7 @@ import (
 	"github.com/lavafroth/8gooses/pkg/constants"
 )
 
-var re *regexp.Regexp
-
-func init() {
-	re = regexp.MustCompile("(https://)?(comics\\.)?(8muses\\.)?(com/)?(comics/)?((picture|album)/)?(?P<artist>[A-Za-z0-9\\-]+/?)(?P<album>[A-Za-z0-9\\-]+/?)?(?P<episode>[A-Za-z0-9\\-]+/?)?")
-}
+var re *regexp.Regexp = regexp.MustCompile("(https://)?(comics\\.)?(8muses\\.)?(com/)?(comics/)?((picture|album)/)?(?P<artist>[A-Za-z0-9\\-]+/?)(?P<album>[A-Za-z0-9\\-]+/?)?(?P<episode>[A-Za-z0-9\\-]+/?)?")
 
 // Tags filters the artist, album and optionally the episode from a complete or partial URL
 func Tags(path string) (tags []string) {

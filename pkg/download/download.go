@@ -28,55 +28,42 @@ type Work struct {
 }
 
 var work chan Work
-var Wg *sync.WaitGroup
+var Tasks = new(sync.WaitGroup)
 
 func Traverse(tags []string, destination string, entity int) error {
 	if entity == EPISODE {
+		nTags := len(tags)
 		directory := filepath.Join(
 			destination,
-			filepath.Join(tags[len(tags)-3:]...),
+			filepath.Join(tags[nTags-3:]...),
 		)
-		episode := tags[len(tags)-1]
+		episode := tags[nTags-1]
 		log.Printf("Downloading episode %s to %s", episode, directory)
 		os.MkdirAll(directory, 0o700)
-		links, err := linksFor(tags, ".image img", "data-src")
-		if err != nil {
-			return fmt.Errorf("while parsing episode metadata: %q", err)
-		}
-		for i, link := range links {
+		return linksEach(tags, ".image img", "data-src", func(i int, link string) error {
 			fragments := strings.Split(strings.Trim(link, "/"), "/")
-			if len(fragments) < 3 {
-				return fmt.Errorf("while parsing image episode metadata: expected image location to have at least 3 fragments: found %d", len(fragments))
+			nFragments := len(fragments) 
+			if nFragments < 3 {
+				return fmt.Errorf("while parsing image episode metadata: expected image location to have at least 3 fragments: found %d", nFragments)
 			}
-			fragments = fragments[len(fragments)-3:]
+			fragments = fragments[nFragments-3:]
 			fragments[1] = "fl"
 			source, err := url.JoinPath(constants.Base, fragments...)
 			if err != nil {
 				return fmt.Errorf("while parsing episode metadata: %q", err)
 			}
-			Wg.Add(1)
-			work <- Work{filepath.Join(
-				directory,
-				fmt.Sprintf("%d%s", i, filepath.Ext(source)),
-			), source}
-		}
-		return nil
+			Tasks.Add(1)
+			work <- Work{filepath.Join(directory, fmt.Sprintf("%d%s", i, filepath.Ext(source))), source}
+			return nil
+		})
 	}
 
-	links, err := linksFor(tags, "a", "href")
-	if err != nil {
-		return err
-	}
-	for _, link := range links {
-		if err := Traverse(resource.Tags(link), destination, entity - 1); err != nil {
-			return err
-		}
-	}
-	return nil
+	return linksEach(tags, "a", "href", func(i int, link string) error {
+		return Traverse(resource.Tags(link), destination, entity - 1)
+	})
 }
 
 func StartJobs(coroutines uint) {
-	Wg = &sync.WaitGroup{}
 	work = make(chan Work, coroutines)
 	for ; coroutines > 0; coroutines-- {
 		go func() {
@@ -84,7 +71,7 @@ func StartJobs(coroutines uint) {
 				if err := download(w); err != nil {
 					log.Printf("warning: %q", err)
 				}
-				Wg.Done()
+				Tasks.Done()
 			}
 		} ()
 	}
@@ -108,24 +95,24 @@ func download(w Work) error {
 	return nil
 }
 
-func linksFor(tags []string, selector string, attribute string) ([]string, error) {
+func linksEach(tags []string, selector string, attribute string, eachFunc func(int, string) error) error {
 	var links []string
 
 	uri, err := resource.URL(tags)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	res, err := http.Get(uri)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("status code error: %d %s for url: %s", res.StatusCode, res.Status, uri)
+		return fmt.Errorf("status code error: %d %s for url: %s", res.StatusCode, res.Status, uri)
 	}
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	doc.
@@ -136,5 +123,10 @@ func linksFor(tags []string, selector string, attribute string) ([]string, error
 				links = append(links, location)
 			}
 		})
-	return links, nil
+	for i, link := range(links) {
+		if err := eachFunc(i, link); err != nil {
+			return err
+		}
+	}
+	return nil
 }

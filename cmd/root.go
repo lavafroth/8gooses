@@ -26,6 +26,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	destination string
+	concurrency uint
+)
+
 var rootCmd = &cobra.Command{
 	Use:   "8gooses <URL / Partial URL>",
 	Short: "8gooses",
@@ -33,14 +38,6 @@ var rootCmd = &cobra.Command{
 8gooses: An 8muses comic downloader in Go
 `,
 	Run: func(cmd *cobra.Command, args []string) {
-		destination, err := cmd.Flags().GetString("output")
-		if err != nil {
-			log.Fatalln(err)
-		}
-		concurrency, err := cmd.Flags().GetUint("concurrency")
-		if err != nil {
-			log.Fatalln(err)
-		}
 		download.StartJobs(concurrency)
 		for _, arg := range args {
 			tags := resource.Tags(arg)
@@ -59,11 +56,10 @@ var rootCmd = &cobra.Command{
 				log.Fatalln(err)
 			}
 		}
-		download.Wg.Wait()
+		download.Tasks.Wait()
 	},
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
@@ -73,14 +69,7 @@ func Execute() {
 }
 
 func init() {
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-
-	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.8gooses.yaml)")
-
-	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
-	rootCmd.Flags().StringP("output", "o", ".", "Directory to save the downloaded comics.")
-	rootCmd.Flags().UintP("concurrency", "c", 4, "Number of coroutines to use when downloading.")
+	rootCmd.Flags().StringVarP(&destination, "output", "o", ".", "Directory to save the downloaded comics.")
+	rootCmd.Flags().UintVarP(&concurrency, "concurrency", "c", 4, "Number of coroutines to use when downloading.")
 }
