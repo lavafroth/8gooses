@@ -109,7 +109,6 @@ func Traverse(tags []string, destination string, entity int) error {
 
 func WriteToCBZ() {
 	for r := range results {
-		log.Print(r.Destination)
 		writer, err := r.Parent.ZipWriter.Create(r.Destination)
 		if err != nil {
 			log.Fatal(err)
@@ -139,7 +138,7 @@ func StartJobs(coroutines uint) {
 					continue
 				}
 				page.Body = res.Body
-				results <- w
+				results <- page
 			}
 		}()
 	}
