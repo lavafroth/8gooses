@@ -3,8 +3,8 @@ package download
 import (
 	"archive/zip"
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -71,7 +71,10 @@ func Traverse(tags []string, destination string, entity int) error {
 		if err != nil {
 			return fmt.Errorf("while parsing episode metadata: %q", err)
 		}
-		log.Printf("downloading episode %s to %s", name, directory)
+		log.WithFields(log.Fields{
+			"name":        name,
+			"destination": directory,
+		}).Info("Downloading episode")
 		episode := Episode{name, directory, file, zipWriter, len(links)}
 		for i, link := range links {
 			fragments := strings.Split(strings.Trim(link, "/"), "/")
@@ -109,14 +112,22 @@ func Traverse(tags []string, destination string, entity int) error {
 
 func WriteToCBZ() {
 	for r := range results {
-		writer, err := r.Parent.ZipWriter.Create(r.Destination)
-		if err != nil {
-			log.Fatal(err)
+		if r.Body != nil {
+			writer, err := r.Parent.ZipWriter.Create(r.Destination)
+			if err != nil {
+				log.WithFields(log.Fields{
+					"artifact": r.Destination,
+					"archive":  r.Parent.File.Name(),
+				}).Warnf("Failed creating artifact in cbz archive: %s", err)
+			}
+			if _, err := io.Copy(writer, r.Body); err != nil {
+				log.WithFields(log.Fields{
+					"artifact": r.Destination,
+					"archive":  r.Parent.File.Name(),
+				}).Warnf("Failed writing to artifact in cbz archive: %s", err)
+			}
+			r.Body.Close()
 		}
-		if _, err := io.Copy(writer, r.Body); err != nil {
-			log.Fatal(err)
-		}
-		r.Body.Close()
 		r.Parent.Pieces--
 		if r.Parent.Pieces == 0 {
 			r.Parent.ZipWriter.Close()
@@ -132,9 +143,13 @@ func StartJobs(coroutines uint) {
 	for ; coroutines > 0; coroutines-- {
 		go func() {
 			for page := range work {
-				res, err := http.Get(page.Source)
+				res, err := mustGet(page.Source)
 				if err != nil {
-					log.Printf("warning: %q", err)
+					log.WithFields(log.Fields{
+						"page":    page.Destination,
+						"episode": page.Parent.Name,
+					}).Warnf("Failed fetching page for episode: %q", err)
+					results <- page
 					continue
 				}
 				page.Body = res.Body
@@ -145,6 +160,17 @@ func StartJobs(coroutines uint) {
 	go WriteToCBZ()
 }
 
+func mustGet(uri string) (*http.Response, error) {
+	res, err := http.Get(uri)
+	if err != nil {
+		return nil, err
+	}
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("status code error: %d %s for url: %s", res.StatusCode, res.Status, uri)
+	}
+	return res, nil
+}
+
 func linksFor(tags []string, selector string, attribute string) ([]string, error) {
 	var links []string
 
@@ -152,14 +178,12 @@ func linksFor(tags []string, selector string, attribute string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	res, err := http.Get(uri)
+
+	res, err := mustGet(uri)
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("status code error: %d %s for url: %s", res.StatusCode, res.Status, uri)
-	}
+
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
 		return nil, err
