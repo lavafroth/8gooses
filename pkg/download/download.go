@@ -1,17 +1,19 @@
 package download
 
 import (
+	"archive/zip"
 	"fmt"
 	"io"
-	"sync"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"github.com/lavafroth/8gooses/pkg/resource"
+	"sync"
+
 	"github.com/lavafroth/8gooses/pkg/constants"
+	"github.com/lavafroth/8gooses/pkg/resource"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -22,27 +24,58 @@ const (
 	ARTIST
 )
 
-type Work struct {
-	Destination string
-	Source string
+var work chan *Page
+var results chan *Page
+var Tasks = new(sync.WaitGroup)
+
+type Episode struct {
+	Name      string
+	Directory string
+	File      *os.File
+	ZipWriter *zip.Writer
+	Pieces    int
 }
 
-var work chan Work
-var Tasks = new(sync.WaitGroup)
+type Page struct {
+	Parent *Episode
+	Source string
+	// This is the destination name of the file inside the zip.
+	// Not to be confused with the name of the zip file itself.
+	Destination string
+	Body        io.ReadCloser
+}
+
+func NewPage(parent *Episode, source string, index int) *Page {
+	return &Page{
+		parent, source,
+		fmt.Sprintf("%05d%s", index+1, filepath.Ext(source)),
+		nil,
+	}
+}
 
 func Traverse(tags []string, destination string, entity int) error {
 	if entity == EPISODE {
 		nTags := len(tags)
-		directory := filepath.Join(
-			destination,
-			filepath.Join(tags[nTags-3:]...),
-		)
-		episode := tags[nTags-1]
-		log.Printf("Downloading episode %s to %s", episode, directory)
+		name := strings.Trim(tags[nTags-1], "/")
+		directory := filepath.Join(destination, tags[nTags-3], tags[nTags-2])
+		filename := fmt.Sprintf("%s.cbz", name)
+
 		os.MkdirAll(directory, 0o700)
-		return linksEach(tags, ".image img", "data-src", func(i int, link string) error {
+		file, err := os.Create(filepath.Join(directory, filename))
+		if err != nil {
+			return fmt.Errorf("while creating %s at %d: %q", filename, directory, err)
+		}
+
+		zipWriter := zip.NewWriter(file)
+		links, err := linksFor(tags, ".image img", "data-src")
+		if err != nil {
+			return fmt.Errorf("while parsing episode metadata: %q", err)
+		}
+		log.Printf("downloading episode %s to %s", name, directory)
+		episode := Episode{name, directory, file, zipWriter, len(links)}
+		for i, link := range links {
 			fragments := strings.Split(strings.Trim(link, "/"), "/")
-			nFragments := len(fragments) 
+			nFragments := len(fragments)
 			if nFragments < 3 {
 				return fmt.Errorf("while parsing image episode metadata: expected image location to have at least 3 fragments: found %d", nFragments)
 			}
@@ -50,69 +83,87 @@ func Traverse(tags []string, destination string, entity int) error {
 			fragments[1] = "fl"
 			source, err := url.JoinPath(constants.Base, fragments...)
 			if err != nil {
-				return fmt.Errorf("while parsing episode metadata: %q", err)
+				return fmt.Errorf("while joining URL base with fragments %+v: %q", fragments, err)
 			}
 			Tasks.Add(1)
-			work <- Work{filepath.Join(directory, fmt.Sprintf("%d%s", i, filepath.Ext(source))), source}
-			return nil
-		})
+			work <- NewPage(&episode, source, i)
+		}
+		return nil
+	}
+	entityRepr := "artist"
+	if entity == ALBUM {
+		entityRepr = "album"
 	}
 
-	return linksEach(tags, "a", "href", func(i int, link string) error {
-		return Traverse(resource.Tags(link), destination, entity - 1)
-	})
-}
-
-func StartJobs(coroutines uint) {
-	work = make(chan Work, coroutines)
-	for ; coroutines > 0; coroutines-- {
-		go func() {
-			for w := range work {
-				if err := download(w); err != nil {
-					log.Printf("warning: %q", err)
-				}
-				Tasks.Done()
-			}
-		} ()
-	}
-}
-
-func download(w Work) error {
-	out, err := os.Create(w.Destination)
+	links, err := linksFor(tags, "a", "href")
 	if err != nil {
-		return err
+		return fmt.Errorf("while traversing links for %s: %q", entityRepr, err)
 	}
-	defer out.Close()
-
-	res, err := http.Get(w.Source)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if _, err := io.Copy(out, res.Body); err != nil {
-		return err
+	for _, link := range links {
+		if err := Traverse(resource.Tags(link), destination, entity-1); err != nil {
+			return fmt.Errorf("while traversing links for %s: %q", entityRepr, err)
+		}
 	}
 	return nil
 }
 
-func linksEach(tags []string, selector string, attribute string, eachFunc func(int, string) error) error {
+func WriteToCBZ() {
+	for r := range results {
+		log.Print(r.Destination)
+		writer, err := r.Parent.ZipWriter.Create(r.Destination)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if _, err := io.Copy(writer, r.Body); err != nil {
+			log.Fatal(err)
+		}
+		r.Body.Close()
+		r.Parent.Pieces--
+		if r.Parent.Pieces == 0 {
+			r.Parent.ZipWriter.Close()
+			r.Parent.File.Close()
+		}
+		Tasks.Done()
+	}
+}
+
+func StartJobs(coroutines uint) {
+	work = make(chan *Page, coroutines)
+	results = make(chan *Page)
+	for ; coroutines > 0; coroutines-- {
+		go func() {
+			for page := range work {
+				res, err := http.Get(page.Source)
+				if err != nil {
+					log.Printf("warning: %q", err)
+					continue
+				}
+				page.Body = res.Body
+				results <- w
+			}
+		}()
+	}
+	go WriteToCBZ()
+}
+
+func linksFor(tags []string, selector string, attribute string) ([]string, error) {
 	var links []string
 
 	uri, err := resource.URL(tags)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	res, err := http.Get(uri)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return fmt.Errorf("status code error: %d %s for url: %s", res.StatusCode, res.Status, uri)
+		return nil, fmt.Errorf("status code error: %d %s for url: %s", res.StatusCode, res.Status, uri)
 	}
 	doc, err := goquery.NewDocumentFromReader(res.Body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	doc.
@@ -123,10 +174,5 @@ func linksEach(tags []string, selector string, attribute string, eachFunc func(i
 				links = append(links, location)
 			}
 		})
-	for i, link := range(links) {
-		if err := eachFunc(i, link); err != nil {
-			return err
-		}
-	}
-	return nil
+	return links, nil
 }
