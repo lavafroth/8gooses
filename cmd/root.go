@@ -34,6 +34,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "8gooses <URL / Partial URL>",
 	Short: "8gooses",
+	Args:  cobra.MinimumNArgs(1),
 	Long: `
 8gooses: An 8muses comic downloader in Go
 `,
