@@ -34,7 +34,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "8gooses <URL / Partial URL>",
 	Short: "8gooses",
-	Long:  `
+	Long: `
 8gooses: An 8muses comic downloader in Go
 `,
 	Run: func(cmd *cobra.Command, args []string) {

@@ -1,9 +1,9 @@
 package resource
 
 import (
+	"github.com/lavafroth/8gooses/pkg/constants"
 	"net/url"
 	"regexp"
-	"github.com/lavafroth/8gooses/pkg/constants"
 )
 
 var re *regexp.Regexp = regexp.MustCompile("(https://)?(comics\\.)?(8muses\\.)?(com/)?(comics/)?((picture|album)/)?(?P<artist>[A-Za-z0-9\\-]+/?)(?P<album>[A-Za-z0-9\\-]+/?)?(?P<episode>[A-Za-z0-9\\-]+/?)?")
