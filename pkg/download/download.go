@@ -3,7 +3,6 @@ package download
 import (
 	"archive/zip"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"net/http"
 	"net/url"
@@ -11,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/lavafroth/8gooses/pkg/constants"
 	"github.com/lavafroth/8gooses/pkg/resource"
@@ -63,7 +64,7 @@ func Traverse(tags []string, destination string, entity int) error {
 		os.MkdirAll(directory, 0o700)
 		file, err := os.Create(filepath.Join(directory, filename))
 		if err != nil {
-			return fmt.Errorf("while creating %s at %d: %q", filename, directory, err)
+			return fmt.Errorf("while creating %s at %s: %q", filename, directory, err)
 		}
 
 		zipWriter := zip.NewWriter(file)
